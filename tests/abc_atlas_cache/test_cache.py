@@ -12,96 +12,13 @@ import json
 import unittest
 
 from abc_atlas_access.abc_atlas_cache.file_attributes import \
-    CacheFileAttributes  # noqa: E501
+    CacheFileAttributes
 from abc_atlas_access.abc_atlas_cache.cloud_cache import (
     S3CloudCache,
     OutdatedManifestWarning
 )
+from .utils import create_bucket, create_manifest_dict
 
-
-def create_manifest_dict(version: str,
-                         test_bucket_name: str = 'test_bucket',
-                         data_file: str = 'data_file.h5ad',
-                         metadata_file: str = 'metadata_file.csv',
-                         test_directory: str = 'test_directory',
-                         file_hash: Optional[str] = None,
-                         location: str = 'us-east-1') -> dict:
-    """
-    Create a manifest dictionary for testing.
-
-    Parameters
-    ----------
-    version: str
-        The version of the test manifest.
-    test_bucket_name: str
-        The name of the test bucket.
-
-    Returns
-    -------
-    test_manifest: dict
-        Dictionary of test manifest values.
-    """
-    if file_hash is None:
-        file_hash = f'abcd{version}'
-    metadata_path = f"metadata/{test_directory}/{version}/{metadata_file}"
-    data_path = f"expression_matrices/{test_directory}/{version}/{data_file}"
-    test_manifest = {
-        "version": version,
-        "resource_uri": f"s3://{test_bucket_name}/",
-        "directory_listing": {
-            f"{test_directory}": {
-                "directories": {
-                    "expression_matrices": {
-                        "version": version,
-                        "relative_path": f"expression_matrices/{test_directory}/{version}",
-                        "url": f"https://{test_bucket_name}.s3.{location}.amazonaws.com/expression_matrices/{test_directory}/{version}/",
-                        "view_link": f"https://{test_bucket_name}.s3.{location}.amazonaws.com/index.html#expression_matrices/{test_directory}/{version}/",
-                        "total_size": 1234
-                    },
-                    "metadata": {
-                        "version": version,
-                        "relative_path": f"metadata/{test_directory}/{version}",
-                        "url": f"https://{test_bucket_name}.s3.{location}.amazonaws.com/metadata/{test_directory}/{version}/",
-                        "view_link": f"https://{test_bucket_name}.s3.{location}.amazonaws.com/index.html#metadata/{test_directory}/{version}/",
-                        "total_size": 5678
-                    }
-                }
-            }
-        },
-        "file_listing": {
-            f"{test_directory}": {
-                "expression_matrices": {
-                    data_file.split('.')[0]: {
-                        "log2": {
-                            "files": {
-                                data_file.split('.')[1]: {
-                                    "version": version,
-                                    "relative_path": data_path,
-                                    "url": f"https://{test_bucket_name}.s3.{location}.amazonaws.com/{data_path}",
-                                    "size": 1234,
-                                    "file_hash": file_hash
-                                }
-                            }
-                        }
-                    }
-                },
-                "metadata": {
-                    metadata_file.split('.')[0]: {
-                        "files": {
-                            metadata_file.split('.')[1]: {
-                                "version": version,
-                                "relative_path": metadata_path,
-                                "url": f"https://{test_bucket_name}.s3.{location}.amazonaws.com/{metadata_path}",
-                                "size": 5678,
-                                "file_hash": file_hash
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    return test_manifest, metadata_path, data_path
 
 @mock_aws
 class TestCache(unittest.TestCase):
@@ -111,9 +28,8 @@ class TestCache(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.cache_dir = Path(self.tmpdir.name).resolve()
         self._region = 'us-east-1'
-        conn = boto3.resource('s3', region_name=self._region)
-        conn.create_bucket(Bucket=self.test_bucket_name, ACL='public-read')
-        self.client = boto3.client('s3', region_name=self._region)
+        self.client = create_bucket(region_name=self._region,
+                                    bucket_name=self.test_bucket_name)
 
     def tearDown(self):
         self.tmpdir.cleanup()
@@ -267,8 +183,6 @@ class TestCache(unittest.TestCase):
         true_checksum = hasher.hexdigest()
         relative_path = 'data/data_file.txt'
 
-        # turn on bucket versioning
-        # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3.html#bucketversioning
         self.client.put_object(Bucket=self.test_bucket_name,
                                Key='data/data_file.txt',
                                Body=data)
@@ -343,7 +257,8 @@ class TestCache(unittest.TestCase):
 
     def test_download_data(self):
         """
-        Test that S3CloudCache.download_data() correctly downloads files from S3
+        Test that S3CloudCache.download_data() correctly downloads files from
+        S3
         """
         hasher = hashlib.md5()
         data = b'11235813kjlssergwesvsdd'
@@ -511,11 +426,11 @@ class TestCache(unittest.TestCase):
         # check that load_last_manifest on an old cache emits the
         # expected warning and loads the correct manifest
         cache = S3CloudCache(self.cache_dir, self.test_bucket_name)
-        expected = 'A more up to date version of the '
-        expected += f'dataset -- {manifest_list[-1]} '
-        expected += '-- exists online'
+        expected = ('A more up to date version of the '
+                    f'dataset -- {manifest_list[-1]} '
+                    '-- exists online')
         with pytest.warns(OutdatedManifestWarning,
-                          match=expected) as warn:
+                          match=expected):
             cache.load_last_manifest()
 
         assert cache.current_manifest == manifest_list[2]
@@ -525,11 +440,11 @@ class TestCache(unittest.TestCase):
         # repeat the above test, making sure the correct manifest is
         # loaded again
         cache = S3CloudCache(self.cache_dir, self.test_bucket_name)
-        expected = 'A more up to date version of the '
-        expected += f'dataset -- {manifest_list[-1]} '
-        expected += '-- exists online'
+        expected = ('A more up to date version of the '
+                    f'dataset -- {manifest_list[-1]} '
+                    '-- exists online')
         with pytest.warns(OutdatedManifestWarning,
-                          match=expected) as warn:
+                          match=expected):
             cache.load_last_manifest()
 
         assert cache.current_manifest == manifest_list[0]
